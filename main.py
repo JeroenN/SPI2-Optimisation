@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 from typing import Tuple
 
-from visualize_new import visualize
+from visualize import visualize
 from objects import Component
 from objects import Sphere
 from objects import Port
