@@ -33,19 +33,24 @@ def test_run():
     components = (c0, c1, c2)
     lr = 1e-3
     
-    rotation_params = jnp.zeros((1,3))
-    translation_params = jnp.zeros((1,3))
+    rotation_params = jnp.zeros((len(components)-1,3))
+    translation_params = jnp.zeros((len(components)-1,3))
     params = {'rotation': rotation_params, 'translation': translation_params}
-    #optimizer = optax.adam(1e-3)
-    #optimizer.init(params)
+    optimizer = optax.adam(lr)
+    opt_state = optimizer.init(params)
 
     for step in range(1000):
-        rotation_params, translation_params, loss = sgd_step(rotation_params, translation_params, lr, components)
+        params, loss = sgd_step(params, lr,optimizer,opt_state, components)
         if step % 1 == 0:
             print(f"step {step}, loss {loss:.6f}")
         
         if step % 100 == 0:
-            transformed_components = transform_components(components, rotation_params, translation_params)
+            transformed_components = transform_components(components, params)
+            volume = volume_loss(transformed_components)
+            collision = component_collision_constraint(transformed_components)
+
+            print(f"\nSTEP {step}, volume {volume}, collision {collision}")
+            print(f"translation: \n {params['translation']},\n rotation: \n {params['rotation']}\n")
             visualize(transformed_components, f"visualization_{step}")
 
 

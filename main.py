@@ -73,7 +73,6 @@ def load_components(csv_files: List[str]) -> Tuple[Component, ...]:
                     except ValueError:
                         continue
 
-        # Use the array-based constructor
         comp = Component.from_objects(tuple(spheres), tuple(ports))
         components.append(comp)
 
@@ -106,14 +105,11 @@ def pairwise_signed_distances(centers, radii, component_ids):
     diff = centers[:, None, :] - centers[None, :, :]   # shape (N, N, 3)
     center_dist = jnp.linalg.norm(diff, axis=-1)       # (N, N)
 
-    # sum radii
     rad_sum = radii[:, None] + radii[None, :]          # (N, N)
 
-    signed_distances = center_dist - rad_sum                     # signed distances
+    signed_distances = center_dist - rad_sum                   
 
     return jnp.min(signed_distances[mask])
-
-
 
 
 def component_collision_constraint(components: Tuple[Component, ...]):
@@ -133,66 +129,43 @@ def component_collision_constraint(components: Tuple[Component, ...]):
 
     signed_distances = jnp.concatenate([d.flatten() for d in signed_distances])
 
-    overlap = -jnp.minimum(signed_distances, 0.0)  # positive where spheres overlap
-    return jnp.sum(overlap)
+    return 1/jnp.min(signed_distances) 
+
+
 
  # Transfroms the components according to the parameters
  # IMPORTANT: Skip the first component, this component always stays in place
-def transform_components_test(components,translation_params):
+def transform_components(components, params):
+    R = jax.vmap(euler_to_rotation_matrix)(params['rotation'])
 
     transformed = []
     for idx, comp in enumerate(components):
         if idx == 0:
             transformed.append(comp)
         else:
-            transformed.append(comp.transform_test(translation_params[idx - 1]))
+            transformed.append(comp.transform(R[idx - 1], params['translation'][idx - 1]))
     return tuple(transformed)
 
- # Transfroms the components according to the parameters
- # IMPORTANT: Skip the first component, this component always stays in place
-def transform_components(components, rotation_params, translation_params):
-    R = jax.vmap(euler_to_rotation_matrix)(rotation_params)
-
-    transformed = []
-    for idx, comp in enumerate(components):
-        if idx == 0:
-            transformed.append(comp)
-        else:
-            transformed.append(comp.transform(R[idx - 1], translation_params[idx - 1]))
-    return tuple(transformed)
-
-def total_loss(rotation_params: jnp.ndarray, translation_params: jnp.ndarray, components: Tuple[Component, ...], w_volume=1.0, w_component_collision=1.0):
-    transformed_components = transform_components(components, rotation_params, translation_params)
+def total_loss(params, components: Tuple[Component, ...], w_volume=1.0, w_component_collision=1.0):
+    transformed_components = transform_components(components, params)
     volume = volume_loss(transformed_components)
     component_collision = component_collision_constraint(transformed_components)
     return w_volume * volume + w_component_collision * component_collision
 
-def total_loss_test(translation_params: jnp.ndarray, components: Tuple[Component, ...], w_volume=1.0, w_component_collision=1.0):
-    transformed_components = transform_components_test(components, translation_params)
-    volume = volume_loss(transformed_components)
-    component_collision = component_collision_constraint(transformed_components)
-    return w_volume * volume + w_component_collision * component_collision
 
 def enforce_range_rotation_params(rotation_params: jnp.ndarray) -> jnp.ndarray:
     return (rotation_params + jnp.pi) % (2*jnp.pi) - jnp.pi
 
-#@jax.jit
-def sgd_step_test(translation_params: jnp.ndarray, lr: float, components: Tuple[Component, ...]):
-    loss, grad_translation = jax.value_and_grad(total_loss_test)(translation_params, components)
-    #rotation_next = rotation_params - lr * grad_rotation
-    #rotation_next = enforce_range_rotation_params(rotation_next)
-    translation_next = translation_params - lr * grad_translation
-    return translation_next, loss
 
-def sgd_step(rotation_params: jnp.ndarray, translation_params: jnp.ndarray, lr: float, components: Tuple[Component, ...]):
-    loss, (grad_rotation, grad_translation) = jax.value_and_grad(total_loss, argnums=(0,1))(rotation_params, translation_params, components)
+def sgd_step(params: dict, lr: float, optimizer: optax.adam, opt_state, components: Tuple[Component, ...]):
+    loss, grads = jax.value_and_grad(total_loss)(params, components)
 
-    #updates, opt_state = optimizer.update(grads, opt_state, params)
+    updates, opt_state = optimizer.update(grads, opt_state, params)
 
-    rotation_next = rotation_params - lr * grad_rotation
-    rotation_next = enforce_range_rotation_params(rotation_next)
-    translation_next = translation_params - lr * grad_translation
-    return rotation_next, translation_next, loss
+    params = optax.apply_updates(params, updates)
+    
+    params['rotation'] = enforce_range_rotation_params(params['rotation'])
+    return params, loss
 
 def create_random_params(num_components):
     key = jax.random.PRNGKey(1)
@@ -204,14 +177,14 @@ def run():
     component_folder = Path(__file__).parent / "files" / "components"
     component_files = [f for f in component_folder.rglob("*.csv") if f.is_file()]
     components = load_components(component_files)
-    rotation_params, translation_params = create_random_params(len(components))
+    # rotation_params, translation_params = create_random_params(len(components))
 
-    lr = 1e-5
+    # lr = 1e-5
 
-    for step in range(10):
-        rotation_params, translation_params, loss = sgd_step(rotation_params, translation_params, lr, components)
-        if step % 1 == 0:
-            print(f"step {step}, loss {loss:.6f}")
+    # for step in range(10):
+    #     rotation_params, translation_params, loss = sgd_step(rotation_params, translation_params, lr, components)
+    #     if step % 1 == 0:
+    #         print(f"step {step}, loss {loss:.6f}")
 
 
 

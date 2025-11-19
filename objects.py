@@ -24,9 +24,6 @@ class Component:
 
     @classmethod
     def from_objects(cls, spheres: Tuple[Sphere, ...], ports: Tuple[Port, ...]) -> "Component":
-        """
-        Convert tuple-of-objects representation into array-based Component.
-        """
         sphere_centers = jnp.stack([s.center for s in spheres]) if spheres else jnp.zeros((0, 3))
         sphere_radii = jnp.array([s.radius for s in spheres]) if spheres else jnp.zeros((0,))
         port_positions = jnp.stack([p.position for p in ports]) if ports else jnp.zeros((0, 3))
@@ -37,18 +34,6 @@ class Component:
             port_positions=port_positions,
             port_numbers=port_numbers,
             color = cls.color
-        )
-
-    def transform_test(self, translation_vector: jnp.ndarray) -> "Component":
-        new_centers = self.sphere_centers + translation_vector
-        new_positions = self.port_positions+ translation_vector
-
-        return Component(
-            sphere_centers=new_centers,
-            sphere_radii=self.sphere_radii,
-            port_positions=new_positions,
-            port_numbers=self.port_numbers,
-            color = self.color
         )
     
     def transform(self, rotation_matrix: jnp.ndarray, translation_vector: jnp.ndarray) -> "Component":
@@ -64,9 +49,6 @@ class Component:
         )
 
     def to_objects(self) -> Tuple[Tuple[Sphere, ...], Tuple[Port, ...]]:
-        """
-        Convert array-based Component back to tuple-of-objects representation.
-        """
         spheres = tuple(Sphere(center=c, radius=r) for c, r in zip(self.sphere_centers, self.sphere_radii))
         ports = tuple(Port(position=p, port_number=int(n)) for p, n in zip(self.port_positions, self.port_numbers))
         return spheres, ports
