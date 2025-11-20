@@ -13,11 +13,12 @@ import jax.numpy as jnp
 from typing import Tuple
 
 from visualize import visualize
-from objects import Component
-from objects import Sphere
-from objects import Port
+from component import Component
+
+import vedo
 
 import optax
+import time
 
 def euler_to_rotation_matrix(euler_angles: jnp.ndarray) -> jnp.ndarray:
     rx, ry, rz = euler_angles
@@ -46,10 +47,12 @@ def euler_to_rotation_matrix(euler_angles: jnp.ndarray) -> jnp.ndarray:
 
 def load_components(csv_files: List[str]) -> Tuple[Component, ...]:
     components: List[Component] = []
-
-    for file_path in csv_files:
-        spheres: List[Sphere] = []
-        ports: List[Port] = []
+    colors = ["lightblue", "yellow", "red", "purple", "green", "orange"]
+    for idx, file_path in enumerate(csv_files):
+        sphere_centers = []
+        sphere_radii = []
+        port_positions = []
+        port_numbers = []
 
         with open(file_path, "r") as f:
             reader = csv.reader(f)
@@ -61,19 +64,16 @@ def load_components(csv_files: List[str]) -> Tuple[Component, ...]:
                     continue
 
                 if mode == "spheres":
-                    try:
                         x, y, z, r = map(float, row)
-                        spheres.append(Sphere(center=jnp.array([x, y, z]), radius=r))
-                    except ValueError:
-                        continue
-                elif mode == "ports":
-                    try:
-                        x, y, z, port_number = float(row[0]), float(row[1]), float(row[2]), int(row[3])
-                        ports.append(Port(position=jnp.array([x, y, z]), port_number=port_number))
-                    except ValueError:
-                        continue
+                        sphere_centers.append([x,y,z])
+                        sphere_radii.append(r)
 
-        comp = Component.from_objects(tuple(spheres), tuple(ports))
+                elif mode == "ports":
+                        x, y, z, port_number = float(row[0]), float(row[1]), float(row[2]), int(row[3])
+                        port_positions.append([x,y,z])
+                        port_numbers.append(port_number)
+
+        comp = Component(jnp.array(sphere_centers), jnp.array(sphere_radii), jnp.array(port_positions), jnp.array(port_numbers), colors[idx])
         components.append(comp)
 
     return tuple(components)
@@ -82,35 +82,13 @@ def volume_loss(components: Tuple[Component, ...]) -> float:
     all_centers = jnp.concatenate([comp.sphere_centers for comp in components], axis=0)  # shape (total_spheres,3)
     all_radii = jnp.concatenate([comp.sphere_radii for comp in components], axis=0)      # shape (total_spheres,)
 
-    min_corner = jnp.min(all_centers - all_radii[:, None], axis=0)  # shape (3,)
-    max_corner = jnp.max(all_centers + all_radii[:, None], axis=0)  # shape (3,)
+    min_corner = jnp.min(all_centers - all_radii[:, jnp.newaxis], axis=0)  
+    max_corner = jnp.max(all_centers + all_radii[:, jnp.newaxis], axis=0)  
 
-    lengths = max_corner - min_corner  # shape (3,)
+    lengths = max_corner - min_corner  
 
     volume = jnp.prod(lengths)
     return volume
-
-def flatten_spheres(components: Tuple[Component, ...]):
-    component_ids = jnp.concatenate([
-    jnp.full(c.sphere_centers.shape[0], i, dtype=jnp.int32) 
-    for i, c in enumerate(components)
-    ])
-
-    centers = jnp.concatenate([c.sphere_centers for c in components], axis=0)
-    radii   = jnp.concatenate([c.sphere_radii for c in components], axis=0)
-    return centers, radii, component_ids
-
-def pairwise_signed_distances(centers, radii, component_ids):
-    mask = component_ids[:, None] != component_ids[None, :]
-    diff = centers[:, None, :] - centers[None, :, :]   # shape (N, N, 3)
-    center_dist = jnp.linalg.norm(diff, axis=-1)       # (N, N)
-
-    rad_sum = radii[:, None] + radii[None, :]          # (N, N)
-
-    signed_distances = center_dist - rad_sum                   
-
-    return jnp.min(signed_distances[mask])
-
 
 def component_collision_constraint(components: Tuple[Component, ...]):
     signed_distances = []
@@ -120,21 +98,26 @@ def component_collision_constraint(components: Tuple[Component, ...]):
             ci = components[i]
             cj = components[j]
 
-            delta = ci.sphere_centers[:, None, :] - cj.sphere_centers[None, :, :]
-            dist = jnp.linalg.norm(delta, axis=-1)  # shape (Ni, Nj)
+            Ni = ci.sphere_centers.shape[0]
+            Nj = cj.sphere_centers.shape[0]
 
-            radii_sum = ci.sphere_radii[:, None] + cj.sphere_radii[None, :]  # shape (Ni, Nj)
+            a = jnp.broadcast_to(ci.sphere_centers[:, jnp.newaxis, :], (Ni, Nj, 3))
+            b = jnp.broadcast_to(cj.sphere_centers[jnp.newaxis, :, :], (Ni, Nj, 3))
 
-            signed_distances.append(dist - radii_sum)
+            delta = a - b
+
+            eclidian_dist = jnp.linalg.norm(delta, axis=-1)
+
+            radii_sum = ci.sphere_radii[:, jnp.newaxis] + cj.sphere_radii[jnp.newaxis, :]
+
+            signed_distances.append(jnp.abs(eclidian_dist - radii_sum))
 
     signed_distances = jnp.concatenate([d.flatten() for d in signed_distances])
 
     return 1/jnp.min(signed_distances) 
 
 
-
- # Transfroms the components according to the parameters
- # IMPORTANT: Skip the first component, this component always stays in place
+ # IMPORTANT: Skips the first component, this component always stays in place
 def transform_components(components, params):
     R = jax.vmap(euler_to_rotation_matrix)(params['rotation'])
 
@@ -159,32 +142,49 @@ def enforce_range_rotation_params(rotation_params: jnp.ndarray) -> jnp.ndarray:
 
 def sgd_step(params: dict, lr: float, optimizer: optax.adam, opt_state, components: Tuple[Component, ...]):
     loss, grads = jax.value_and_grad(total_loss)(params, components)
-
     updates, opt_state = optimizer.update(grads, opt_state, params)
-
     params = optax.apply_updates(params, updates)
     
-    params['rotation'] = enforce_range_rotation_params(params['rotation'])
+    #params['rotation'] = enforce_range_rotation_params(params['rotation'])
     return params, loss
 
-def create_random_params(num_components):
-    key = jax.random.PRNGKey(1)
-    rotation_params = jax.random.uniform(key, shape=(num_components-1, 3), minval=-jnp.pi, maxval=jnp.pi)
-    translation_params = jax.random.uniform(key, shape=(num_components-1, 3), minval=-10, maxval=10)
+#TODO: make the radius based on the sizes of the components
+def create_random_params(num_components, min_radius=3.0, max_radius=6.0):
+    seed = int(time.time() * 1e6) % (2**32 - 1)
+    key = jax.random.PRNGKey(seed)
+
+    keys = jax.random.split(key, num_components - 1)
+
+    rotation_params = jax.vmap(
+        lambda k: jax.random.uniform(k, (3,), minval=-jnp.pi, maxval=jnp.pi)
+    )(keys)
+
+    def random_direction(k):
+        v = jax.random.normal(k, (3,))
+        return v / jnp.linalg.norm(v)
+
+    dirs = jax.vmap(random_direction)(keys)
+
+    radii = jax.vmap(
+        lambda k: jax.random.uniform(k, (), minval=min_radius, maxval=max_radius)
+    )(keys)
+
+    translation_params = dirs * radii[:, jnp.newaxis]
+
     return rotation_params, translation_params
 
 def run():
     component_folder = Path(__file__).parent / "files" / "components"
     component_files = [f for f in component_folder.rglob("*.csv") if f.is_file()]
     components = load_components(component_files)
-    # rotation_params, translation_params = create_random_params(len(components))
+    rotation_params, translation_params = create_random_params(len(components))
 
-    # lr = 1e-5
+    lr = 1e-5
 
-    # for step in range(10):
-    #     rotation_params, translation_params, loss = sgd_step(rotation_params, translation_params, lr, components)
-    #     if step % 1 == 0:
-    #         print(f"step {step}, loss {loss:.6f}")
+    for step in range(10):
+        rotation_params, translation_params, loss = sgd_step(rotation_params, translation_params, lr, components)
+        if step % 1 == 0:
+            print(f"step {step}, loss {loss:.6f}")
 
 
 

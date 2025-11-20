@@ -5,7 +5,7 @@ from typing import Tuple
 import numpy as np
 import jax
 from vedo import Sphere, Plotter, Mesh
-from objects import Component
+from component import Component
 
 
 def create_meshes_components(components: Tuple[Component, ...]):
@@ -54,14 +54,15 @@ def create_image(meshes_per_component, port_meshes, image_path, width=1920, heig
     center = first_vertices.mean(axis=0)
 
     all_vertices = np.vstack([np.asarray(m.vertices) for meshes in meshes_per_component.values() for m in meshes])
+    center = all_vertices.mean(axis=0)
 
+    # Compute bounding box and camera distance
     bbox_min = all_vertices.min(axis=0)
     bbox_max = all_vertices.max(axis=0)
     bbox_extent = bbox_max - bbox_min
     max_extent = np.linalg.norm(bbox_extent)
 
-    # Compute camera position to fit all objects
-    camera_distance = max_extent * 1.5  # factor >1 for padding
+    camera_distance = max_extent * 1.5  # 1.5 gives a bit of padding
     p.camera.SetFocalPoint(center)
 
     # Define spherical angles for a nice 3D view
