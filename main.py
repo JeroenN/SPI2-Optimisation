@@ -79,8 +79,8 @@ def load_components(csv_files: List[str]) -> Tuple[Component, ...]:
     return tuple(components)
 
 def volume_loss(components: Tuple[Component, ...]) -> float:
-    all_centers = jnp.concatenate([comp.sphere_centers for comp in components], axis=0)  # shape (total_spheres,3)
-    all_radii = jnp.concatenate([comp.sphere_radii for comp in components], axis=0)      # shape (total_spheres,)
+    all_centers = jnp.concatenate([comp.sphere_centers for comp in components], axis=0)  
+    all_radii = jnp.concatenate([comp.sphere_radii for comp in components], axis=0)    
 
     min_corner = jnp.min(all_centers - all_radii[:, jnp.newaxis], axis=0)  
     max_corner = jnp.max(all_centers + all_radii[:, jnp.newaxis], axis=0)  
@@ -89,6 +89,34 @@ def volume_loss(components: Tuple[Component, ...]) -> float:
 
     volume = jnp.prod(lengths)
     return volume
+
+def component_collision_constraint_new(components: Tuple[Component, ...]):
+    counts = jnp.array([comp.sphere_centers.shape[0] for comp in components])
+    component_ids = jnp.repeat(jnp.arange(len(components)), counts)
+
+    all_centers = jnp.concatenate([comp.sphere_centers for comp in components], axis=0) 
+    all_radii = jnp.concatenate([comp.sphere_radii for comp in components], axis=0)
+    # Get indices of sphere pairs across different components
+    N = all_centers.shape[0]
+    idx_i, idx_j = jnp.triu_indices(N, k=1)  # upper triangle
+
+    valid = component_ids[idx_i] != component_ids[idx_j]
+    idx_i = idx_i[valid]
+    idx_j = idx_j[valid]
+
+    ci = all_centers[idx_i]
+    cj = all_centers[idx_j]
+    ri = all_radii[idx_i]
+    rj = all_radii[idx_j]
+
+    delta = ci - cj
+    d = jnp.linalg.norm(delta, axis=-1)
+    rs = ri + rj
+    sd = jnp.abs(d - rs)
+
+    return 1.0 / jnp.min(sd)
+
+
 
 def component_collision_constraint(components: Tuple[Component, ...]):
     signed_distances = []
@@ -114,7 +142,8 @@ def component_collision_constraint(components: Tuple[Component, ...]):
 
     signed_distances = jnp.concatenate([d.flatten() for d in signed_distances])
 
-    return 1/jnp.min(signed_distances) 
+    
+    return 1/jnp.min(signed_distances)
 
 
  # IMPORTANT: Skips the first component, this component always stays in place
@@ -132,7 +161,7 @@ def transform_components(components, params):
 def total_loss(params, components: Tuple[Component, ...], w_volume=1.0, w_component_collision=1.0):
     transformed_components = transform_components(components, params)
     volume = volume_loss(transformed_components)
-    component_collision = component_collision_constraint(transformed_components)
+    component_collision = component_collision_constraint_new(transformed_components)
     return w_volume * volume + w_component_collision * component_collision
 
 
