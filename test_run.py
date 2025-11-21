@@ -1,6 +1,8 @@
 
 from main import *
 
+print(jax.default_backend())
+
 def test_run1():
     colors = np.linspace(start = 0.2, stop = 1.0, num = 3)
     c0 = Component(
@@ -81,7 +83,7 @@ def test_run2():
     for step in range(10_000):
         params, loss = sgd_step(params, lr,optimizer,opt_state, components)
         
-        if step % 200 == 0:
+        if step % 50 == 0:
             transformed_components = transform_components(components, params)
             volume = volume_loss(transformed_components)
             collision = component_collision_constraint_new(transformed_components)

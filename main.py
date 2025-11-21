@@ -96,25 +96,28 @@ def component_collision_constraint_new(components: Tuple[Component, ...]):
 
     all_centers = jnp.concatenate([comp.sphere_centers for comp in components], axis=0) 
     all_radii = jnp.concatenate([comp.sphere_radii for comp in components], axis=0)
-    # Get indices of sphere pairs across different components
+    # Basically gives all the pairs such that j > i
     N = all_centers.shape[0]
-    idx_i, idx_j = jnp.triu_indices(N, k=1)  # upper triangle
+    idx_i, idx_j = jnp.triu_indices(N, k=1) 
 
     valid = component_ids[idx_i] != component_ids[idx_j]
     idx_i = idx_i[valid]
     idx_j = idx_j[valid]
 
-    ci = all_centers[idx_i]
-    cj = all_centers[idx_j]
-    ri = all_radii[idx_i]
-    rj = all_radii[idx_j]
+    comps_i = all_centers[idx_i]
+    comps_j = all_centers[idx_j]
+    radii_i = all_radii[idx_i]
+    radii_j = all_radii[idx_j]
 
-    delta = ci - cj
-    d = jnp.linalg.norm(delta, axis=-1)
-    rs = ri + rj
-    sd = jnp.abs(d - rs)
-
-    return 1.0 / jnp.min(sd)
+    delta = comps_i - comps_j
+    distance = jnp.linalg.norm(delta, axis=-1)
+    radii_sum = radii_i + radii_j
+    signed_distance = jnp.abs(distance) - radii_sum
+    min = jnp.min(signed_distance)
+    #if min <= 0:
+    #    min = 1e-6
+        
+    return 1.0 / min
 
 
 
