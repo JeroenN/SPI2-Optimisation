@@ -32,7 +32,7 @@ def test_run1():
         color = colors[2]
     )
 
-    components = (c0, c1, c2)
+    components = [c0, c1, c2]
     lr = 1e-3
     
     rotation_params = jnp.zeros((len(components)-1,3))
@@ -65,23 +65,16 @@ def test_run2():
     #translation_params = jnp.array([[-2.6277635, 0.00518192, -0.48108062],[ 2.1418629,  -0.00431631, -0.11753592]])
     #rotation_params = jnp.array([[-1.5624535,  -0.00696707,  0.00822425],[ 1.8177378,  -1.5606427,  -1.8292603 ]])
 
-
-
     params = {'rotation': rotation_params, 'translation': translation_params}
 
     transformed_components = transform_components(components, params)
-    volume = volume_loss(transformed_components)
-    collision_old = component_collision_constraint(transformed_components)
-    collision = component_collision_constraint_new(transformed_components)
-
-    print(f"colission old: {collision_old}")
-    print(f"colission new: {collision}")
 
     optimizer = optax.adam(learning_rate= lr, b1=0.8, b2=0.95)
     opt_state = optimizer.init(params)
+    sgd_step = make_sgd_step(optimizer)
 
     for step in range(10_000):
-        params, loss = sgd_step(params, lr,optimizer,opt_state, components)
+        params = sgd_step(params,opt_state, components)[0]
         
         if step % 50 == 0:
             transformed_components = transform_components(components, params)

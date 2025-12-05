@@ -45,7 +45,7 @@ def euler_to_rotation_matrix(euler_angles: jnp.ndarray) -> jnp.ndarray:
     return rotation_matrix
 
 
-def load_components(csv_files: List[str]) -> Tuple[Component, ...]:
+def load_components(csv_files: List[str]) -> list[Component]:
     components: List[Component] = []
     colors = ["lightblue", "yellow", "red", "purple", "green", "orange"]
     for idx, file_path in enumerate(csv_files):
@@ -76,9 +76,9 @@ def load_components(csv_files: List[str]) -> Tuple[Component, ...]:
         comp = Component(jnp.array(sphere_centers), jnp.array(sphere_radii), jnp.array(port_positions), jnp.array(port_numbers), colors[idx])
         components.append(comp)
 
-    return tuple(components)
+    return components
 
-def volume_loss(components: Tuple[Component, ...]) -> float:
+def volume_loss(components: list[Component]) -> float:
     all_centers = jnp.concatenate([comp.sphere_centers for comp in components], axis=0)  
     all_radii = jnp.concatenate([comp.sphere_radii for comp in components], axis=0)    
 
@@ -90,7 +90,7 @@ def volume_loss(components: Tuple[Component, ...]) -> float:
     volume = jnp.prod(lengths)
     return volume
 
-def component_collision_constraint_new(components: Tuple[Component, ...]):
+def component_collision_constraint_new(components: list[Component]):
     counts = jnp.array([comp.sphere_centers.shape[0] for comp in components])
     component_ids = jnp.repeat(jnp.arange(len(components)), counts)
 
@@ -121,7 +121,7 @@ def component_collision_constraint_new(components: Tuple[Component, ...]):
 
 
 
-def component_collision_constraint(components: Tuple[Component, ...]):
+def component_collision_constraint(components: list[Component]):
     signed_distances = []
 
     for i in range(len(components)):
@@ -161,7 +161,7 @@ def transform_components(components, params):
             transformed.append(comp.transform(R[idx - 1], params['translation'][idx - 1]))
     return tuple(transformed)
 
-def total_loss(params, components: Tuple[Component, ...], w_volume=1.0, w_component_collision=1.0):
+def total_loss(params, components: list[Component], w_volume=1.0, w_component_collision=1.0):
     transformed_components = transform_components(components, params)
     volume = volume_loss(transformed_components)
     component_collision = component_collision_constraint_new(transformed_components)
@@ -171,16 +171,16 @@ def total_loss(params, components: Tuple[Component, ...], w_volume=1.0, w_compon
 def enforce_range_rotation_params(rotation_params: jnp.ndarray) -> jnp.ndarray:
     return (rotation_params + jnp.pi) % (2*jnp.pi) - jnp.pi
 
+def make_sgd_step(optimizer):
+    #@jax.jit
+    def sgd_step(params, opt_state, components):
+        loss, grads = jax.value_and_grad(total_loss)(params, components)
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        return params, opt_state, loss
+    return sgd_step
 
-def sgd_step(params: dict, lr: float, optimizer: optax.adam, opt_state, components: Tuple[Component, ...]):
-    loss, grads = jax.value_and_grad(total_loss)(params, components)
-    updates, opt_state = optimizer.update(grads, opt_state, params)
-    params = optax.apply_updates(params, updates)
-    
-    #params['rotation'] = enforce_range_rotation_params(params['rotation'])
-    return params, loss
-
-#TODO: make the radius based on the sizes of the components
+#TODO: make the radius based on the sizes and number of the components
 def create_random_params(num_components, min_radius=3.0, max_radius=6.0):
     seed = int(time.time() * 1e6) % (2**32 - 1)
     key = jax.random.PRNGKey(seed)
